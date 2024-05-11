@@ -94,7 +94,7 @@ def Get_Video_Id(channel_id):
         request = youtube.search().list(
             part='snippet',
             channelId=channel_id,
-            maxResults=50,  # Adjust as per your requirements, max is 50
+            maxResults=50,
             pageToken=next_page_token
         )
         response = request.execute()
@@ -361,7 +361,6 @@ def get_playlist_details(channel_ids):
 
     return all_playlists
 
-# Example usage:
 channel_ids = ["UClHGyN8q-_GmFxjMpBdjL0g", "UCWbowecFn2dqdJSVAA2CRDw", "UCcDwnq9FPdY22uFbFJBkdRw"]
 all_playlists = get_playlist_details(channel_ids)
 print(all_playlists)
