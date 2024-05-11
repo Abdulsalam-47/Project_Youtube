@@ -371,12 +371,12 @@ print(all_playlists)
 
 def fetch_all_data(channel_id):
     channel_info = Channel_Info(channel_id)
-    video_ids = Get_Video_Id(channel_id)  # Fetch video IDs
-    cursor = mydb.cursor()  # Initialize MySQL cursor
-    video_details = Get_Video_Details(video_ids, cursor, mydb)  # Pass cursor and mydb to Get_Video_Details function
-    cursor.close()  # Close cursor after fetching video details
+    video_ids = Get_Video_Id(channel_id)
+    cursor = mydb.cursor()
+    video_details = Get_Video_Details(video_ids, cursor, mydb)
+    cursor.close()
     playlist_details = get_playlist_details(channel_id)
-    comment_details = get_comment_Details(video_ids[0])  # Assuming the first video ID is used for comment details
+    comment_details = get_comment_Details(video_ids[0])
     
     # Convert dictionaries to DataFrames
     channel_df = pd.DataFrame([channel_info])
@@ -538,7 +538,6 @@ def main():
 
                 elif selected_question == questions[8]:
                         try:
-                            # Execute SQL query to calculate average duration for each channel
                             cursor.execute("""
                                 SELECT 
                                     channel_name, 
@@ -562,16 +561,9 @@ def main():
                             if not data:
                                 st.warning("No data found.")
                             else:
-                                # Create a DataFrame from the fetched data
                                 df = pd.DataFrame(data, columns=['Channel_Name', 'Avg_Duration_Seconds'])
-                                
-                                # Convert average duration from seconds to HH:MM:SS format
                                 df['Avg_Duration'] = df['Avg_Duration_Seconds'].apply(seconds_to_hhmmss)
-                                
-                                # Display DataFrame to inspect data
                                 st.write(df)
-                                
-                                # Plot scatter chart for average duration of videos for each channel
                                 plt.figure(figsize=(10, 6))
                                 plt.scatter(df['Channel_Name'], df['Avg_Duration_Seconds'], color='skyblue')
                                 plt.xlabel('Channel')
@@ -579,8 +571,6 @@ def main():
                                 plt.title('Average Duration of Videos for Each Channel')
                                 plt.xticks(rotation=90)
                                 plt.tight_layout()
-                                
-                                # Display the scatter chart
                                 st.pyplot()
                         except Exception as e:
                             st.error(f"Error occurred: {e}")
