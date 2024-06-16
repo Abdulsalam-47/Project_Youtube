@@ -1,13 +1,14 @@
 from googleapiclient.discovery import build
 import mysql.connector
-import pandas as pd
-import re
 import json
-from datetime import datetime
+import re
+import pandas as pd
 import numpy as np
+from datetime import datetime,timedelta
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
+from googleapiclient.errors import HttpError 
 
 
 #SQL Connection
@@ -22,76 +23,84 @@ mydb = mysql.connector.connect(
 
 cursor = mydb.cursor()
 
+#API key Connection
+
 def api_connection():
-    api_key = "AIzaSyDDRdxgcrw2woSS09qJ5H4UEr32zgokw9g"
+    api_key = "AIzaSyAS7P7Y3q2fZRUM6E6j1EwhQ6JGkDf2mzg"
     api_service_name = "youtube"
     api_version = "v3"
 
     youtube = build(api_service_name, api_version, developerKey=api_key)
     return youtube
 
-youtube = api_connection()
-
-
-#Get Channel Information
-
-def Channel_Info(channel_ids):
-    for channel_id in channel_ids:
-        try:
-            cursor.execute("""CREATE TABLE IF NOT EXISTS channel_info (
-                                channel_name VARCHAR(255),
-                                channel_id VARCHAR(255) PRIMARY KEY,
-                                subscribe INT,
-                                views INT,
-                                total_videos INT,
-                                channel_description TEXT,
-                                playlist_id VARCHAR(255)
-                            )""")
-            
-            request = youtube.channels().list(
-                part="snippet,contentDetails,statistics",
-                id=channel_id
-            )
-            response = request.execute()
-            
-            for item in response.get('items',[]):
-                details = dict(Channel_Name= item['snippet']['title'],
-                    Channel_Id= item['id'],
-                    Subscribers= item['statistics']['subscriberCount'],
-                    Views= item['statistics']['viewCount'],
-                    Total_Videos= item['statistics']['videoCount'],
-                    Channel_Description= item['snippet']['description'],
-                    Playlist_Id=item['contentDetails']['relatedPlaylists']['uploads']
-                )
-                
-                # Check if the channel already exists in the database
-                cursor.execute("SELECT channel_id FROM channel_info WHERE channel_id = %s", (details['Channel_Id'],))
-                existing_channel = cursor.fetchone()
-                
-                if not existing_channel:
-                    cursor.execute("INSERT INTO channel_info (channel_name, channel_id, subscribe, views, total_videos, channel_description, playlist_id) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                                   (details['Channel_Name'], details['Channel_Id'], details['Subscribers'], details['Views'], details['Total_Videos'], details['Channel_Description'], details['Playlist_Id']))
-                    mydb.commit()
-                else:
-                    print(f"Channel with ID {details['Channel_Id']} already exists in the database.")
-
-        except Exception as e:
-            print(f"Error processing channel ID {channel_id}: {e}")
-
-channel_ids = ["UClHGyN8q-_GmFxjMpBdjL0g","UCWbowecFn2dqdJSVAA2CRDw","UCcDwnq9FPdY22uFbFJBkdRw"]
-
-Channel_Info(channel_ids)
-
+yt_call = api_connection()
 
 # List of channel IDs
-channel_ids = ["UClHGyN8q-_GmFxjMpBdjL0g","UCWbowecFn2dqdJSVAA2CRDw","UCcDwnq9FPdY22uFbFJBkdRw"]
+channel_ids = ["UCWbowecFn2dqdJSVAA2CRDw"]
+def Channel_Info(channel_id):
+    try:
+        cursor.execute("""CREATE TABLE IF NOT EXISTS channel_info (
+                            channel_name VARCHAR(255),
+                            channel_id VARCHAR(255) PRIMARY KEY,
+                            subscribe INT,
+                            views INT,
+                            total_videos INT,
+                            channel_description TEXT,
+                            playlist_id VARCHAR(255)
+                        )""")
+        
+        request = yt_call.channels().list(
+            part="snippet,contentDetails,statistics",
+            id=channel_id
+        )
+        response = request.execute()
+        
+        for item in response.get('items', []):
+            details = {
+                'Channel_Name': item['snippet']['title'],
+                'Channel_Id': item['id'],
+                'Subscribers': int(item['statistics']['subscriberCount']),
+                'Views': int(item['statistics']['viewCount']),
+                'Total_Videos': int(item['statistics']['videoCount']),
+                'Channel_Description': item['snippet']['description'],
+                'Playlist_Id': item['contentDetails']['relatedPlaylists']['uploads']
+            }
+            
+            # Check if the channel_id already exists in the database
+            cursor.execute("SELECT COUNT(*) FROM channel_info WHERE channel_id = %s", (details['Channel_Id'],))
+            count = cursor.fetchone()[0]
+            
+            if count == 0:
+                cursor.execute("""
+                    INSERT INTO channel_info
+                    (channel_name, channel_id, subscribe, views, total_videos, channel_description, playlist_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (details['Channel_Name'], details['Channel_Id'], details['Subscribers'], details['Views'],
+                     details['Total_Videos'], details['Channel_Description'], details['Playlist_Id']))
+                mydb.commit()
+                return details
+            else:
+                print(f"Channel with channel_id {channel_id} already exists.")
+                return None
+    
+    except Exception as e:
+        print(f"Error in Channel_Info for channel_id {channel_id}: {str(e)}")
+        return None
+    
+# Usage example
+for channel_id in channel_ids:
+    channel_details = Channel_Info(channel_id)
+    if channel_details:
+        print(f"Channel '{channel_details['Channel_Name']}' details stored successfully.")
+
 
 # Function to fetch video IDs from a channel
 def Get_Video_Id(channel_id):
     video_ids = []
     next_page_token = None
     while True:
-        request = youtube.search().list(
+        request = yt_call.search().list(
             part='snippet',
             channelId=channel_id,
             maxResults=50,
@@ -112,6 +121,7 @@ for channel_id in channel_ids:
     all_video_ids.extend(video_ids)
 
 print(all_video_ids)
+
 
 
 # Function to parse duration
@@ -163,7 +173,7 @@ def Get_Video_Details(video_ids, cursor, mydb):
     video_list = []
     try:
         for video_id in video_ids:
-            request = youtube.videos().list(
+            request = yt_call.videos().list(
                 part="snippet,contentDetails,statistics",
                 id=video_id
             )
@@ -234,156 +244,231 @@ all_video_details = Get_Video_Details(all_video_ids, cursor, mydb)
 
 print(all_video_details)
 
+from googleapiclient.errors import HttpError 
 
-# Create MySQL table for comment details
-try:
-    cursor.execute("""CREATE TABLE IF NOT EXISTS comment_details (
-                        comment_id VARCHAR(255),
-                        video_id VARCHAR(255),
-                        comment_text TEXT,
-                        author VARCHAR(255),
-                        published_date DATETIME
-                    )""")
-except Exception as e:
-    print(f"Error creating table: {e}")
+# Establish MySQL connection
+mydb = mysql.connector.connect(
+    host="127.0.0.1",
+    port="3306",
+    user="root",
+    password="root",
+    database="youtube"
+)
 
-# Function to fetch comment details for a video ID
-def get_comment_Details(video_id):
-    comment_list = []
-    try:
-        request = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=50
+cursor = mydb.cursor()
+
+# Initialize the YouTube API client
+yt_call = build('youtube', 'v3', developerKey='AIzaSyAS7P7Y3q2fZRUM6E6j1EwhQ6JGkDf2mzg')
+
+def create_comment_details_table():
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS comment_details (
+            comment_id VARCHAR(255) PRIMARY KEY,
+            video_id VARCHAR(255),
+            comment_text TEXT,
+            author VARCHAR(255),
+            published_date DATETIME
         )
-        response = request.execute()
+    """)
 
-        # Check if comments are disabled
-        if 'items' not in response:
-            print(f"Comments are disabled for video ID {video_id}")
-            return comment_list
+def get_video_ids(channel_id):
+    Video_ID = []
+    response = yt_call.channels().list(
+        id=channel_id,
+        part='contentDetails'
+    ).execute()
+    
+    Playlist_ID = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+    
+    Next_Page_Token = None
+    
+    while True:
+        request_1 = yt_call.playlistItems().list(
+            part='snippet',
+            playlistId=Playlist_ID,
+            maxResults=50,
+            pageToken=Next_Page_Token
+        ).execute()
+        for item in request_1['items']:
+            Video_ID.append(item['snippet']['resourceId']['videoId'])
+        Next_Page_Token = request_1.get('nextPageToken')
+        if Next_Page_Token is None:
+            break
+    return Video_ID
 
-        for item in response['items']:
-            comment_det = {
-                'comment_id': item['snippet']['topLevelComment']['id'],
-                'video_id': item['snippet']['topLevelComment']['snippet']['videoId'],
-                'comment_text': item['snippet']['topLevelComment']['snippet']['textDisplay'],
-                'author': item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
-                'published_date': item['snippet']['topLevelComment']['snippet']['publishedAt']
-            }
+def get_comment_Details(video_ids):
+    comment_List = []
+    inserted_comment_ids = set()  # Set to track inserted comment IDs
 
-            # Check if the comment already exists in the database
-            cursor.execute("SELECT comment_id FROM comment_details WHERE comment_id = %s", (comment_det['comment_id'],))
-            existing_comment = cursor.fetchone()
-            if not existing_comment:
-                # Insert the comment into the database
-                iso_datetime = comment_det['published_date']
-                parsed_datetime = datetime.datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
-                mysql_published_dates = parsed_datetime.strftime('%Y-%m-%d %H:%M:%S')
-
-                cursor.execute("INSERT INTO comment_details (comment_id, video_id, comment_text, author, published_date) VALUES (%s, %s, %s, %s, %s)",
-                               (comment_det['comment_id'], comment_det['video_id'], comment_det['comment_text'], comment_det['author'], mysql_published_dates))
-                mydb.commit()
-
-            comment_list.append(comment_det)
-
-    except Exception as e:
-        print(f"Error fetching comments for video ID {video_id}: {e}")
-
-    return comment_list
-
-# Function to fetch comment details for all video IDs
-def get_all_video_comments(all_video_ids):
-    all_comments = []
-    for video_id in all_video_ids:
-        video_comments = get_comment_Details(video_id)
-        all_comments.extend(video_comments)
-    return all_comments
-
-# Call the function to get all video comment details
-all_video_comments = get_all_video_comments(all_video_ids)
-print(all_video_comments)
-
-
-def get_playlist_details(channel_ids):
-    all_playlists = []
+    # Create the table before inserting data
+    create_comment_details_table()
+    
     try:
-        cursor.execute("""CREATE TABLE IF NOT EXISTS playlist_details (
-                            playlist_id VARCHAR(255) PRIMARY KEY,
-                            title VARCHAR(255),
-                            channel_id VARCHAR(255),
-                            published_date DATETIME,
-                            video_count INT
-                        )""")
-        
-        for channel_id in channel_ids:
-            Next_Page_Token = None
-            while True:
-                request = youtube.playlists().list(
-                    part="snippet,contentDetails",
-                    channelId=channel_id,
-                    maxResults=50,
-                    pageToken=Next_Page_Token
+        for video_id in video_ids:
+            try:
+                request = yt_call.commentThreads().list(
+                    part="snippet",
+                    videoId=video_id,
+                    maxResults=50
                 )
                 response = request.execute()
 
-                for item in response.get('items', []):
-                    playlist_det = {
-                        'playlist_id': item['id'],
-                        'title': item['snippet']['title'],
-                        'channel_id': item['snippet']['channelId'],
-                        'published_date': item['snippet']['publishedAt'],
-                        'video_count': item['contentDetails']['itemCount']
-                    }
-                    all_playlists.append(playlist_det)
+                for item in response['items']:
+                    comment_id = item['snippet']['topLevelComment']['id']
 
-                    iso_datetime = playlist_det['published_date']
-                    parsed_datetime = datetime.datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
-                    mysql_published_date = parsed_datetime.strftime('%Y-%m-%d %H:%M:%S')
+                    if comment_id not in inserted_comment_ids:
+                        Comment_Det = dict(
+                            Comment_ID=comment_id,
+                            Video_Id=item['snippet']['topLevelComment']['snippet']['videoId'],
+                            Comment_Text=item['snippet']['topLevelComment']['snippet']['textDisplay'],
+                            Author_Name=item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
+                            Published_Date=item['snippet']['topLevelComment']['snippet']['publishedAt']
+                        )
 
-                    # Check if the playlist already exists in the database
-                    cursor.execute("SELECT playlist_id FROM playlist_details WHERE playlist_id = %s", (playlist_det['playlist_id'],))
-                    existing_playlist = cursor.fetchone()
+                        comment_List.append(Comment_Det)
 
-                    if not existing_playlist:
-                        cursor.execute("INSERT INTO playlist_details (playlist_id, title, channel_id, published_date, video_count) VALUES (%s, %s, %s, %s, %s)",
-                                       (playlist_det['playlist_id'], playlist_det['title'], playlist_det['channel_id'], mysql_published_date, playlist_det['video_count']))
+                        iso_datetime = Comment_Det['Published_Date']
+                        parsed_datetime = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
+                        mysql_published_dates = parsed_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
+                        cursor.execute("""
+                            INSERT INTO comment_details 
+                            (comment_id, video_id, comment_text, author, published_date) 
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (Comment_Det['Comment_ID'], Comment_Det['Video_Id'], Comment_Det['Comment_Text'], 
+                            Comment_Det['Author_Name'], mysql_published_dates)
+                        )
                         mydb.commit()
-                    else:
-                        print(f"Playlist with ID {playlist_det['playlist_id']} already exists in the database.")
 
-                Next_Page_Token = response.get('nextPageToken')
-                if Next_Page_Token is None:
-                    break
+                        inserted_comment_ids.add(comment_id)  # Add inserted comment ID to set
+                    else:
+                        print(f"Skipping duplicate comment ID: {comment_id}")
+            except HttpError as e:
+                if e.resp.status == 403 and 'commentsDisabled' in e.content.decode():
+                    print(f"Comments are disabled for video ID: {video_id}")
+                else:
+                    raise e
 
     except Exception as e:
         print(f"Error: {e}")
 
-    return all_playlists
+    return comment_List
 
-channel_ids = ["UClHGyN8q-_GmFxjMpBdjL0g", "UCWbowecFn2dqdJSVAA2CRDw", "UCcDwnq9FPdY22uFbFJBkdRw"]
-all_playlists = get_playlist_details(channel_ids)
-print(all_playlists)
+# Example usage
+channel_id = "UCWbowecFn2dqdJSVAA2CRDw"  # Replace with a valid channel ID
+video_ids = get_video_ids(channel_id)
+comment_details = get_comment_Details(video_ids)
 
 
-#Overall Function get detils
+
+# List of channel IDs
+channel_ids = ["UCWbowecFn2dqdJSVAA2CRDw"]
+
+def create_playlist_details_table():
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_details (
+                playlist_id VARCHAR(255) PRIMARY KEY,
+                title VARCHAR(255),
+                channel_id VARCHAR(255),
+                published_date DATETIME,
+                video_count INT
+            )
+        """)
+    except Exception as e:
+        print(f"Error creating playlist_details table: {e}")
+
+def get_playlist_details(channel_id):
+    Playlist_Data = []
+
+    # Create the table before inserting data
+    create_playlist_details_table()
+    
+    try:
+        Next_Page_Token = None
+
+        while True:
+            request = yt_call.playlists().list(
+                part="snippet,contentDetails",
+                channelId=channel_id,
+                maxResults=50,
+                pageToken=Next_Page_Token
+            )
+            response = request.execute()
+
+            for item in response.get('items', []):
+                PlayList_Det = {
+                    'Playlist_Id': item['id'],
+                    'Title': item['snippet']['title'],
+                    'Channel_Id': item['snippet']['channelId'],
+                    'Published_Date': item['snippet']['publishedAt'],
+                    'Video_Count': item['contentDetails']['itemCount']
+                }
+
+                Playlist_Data.append(PlayList_Det)
+
+                # Check if the playlist ID already exists
+                cursor.execute("SELECT COUNT(*) FROM playlist_details WHERE playlist_id = %s", (PlayList_Det['Playlist_Id'],))
+                result = cursor.fetchone()
+
+                if result[0] == 0:  # Playlist ID does not exist, insert new record
+                    iso_datetime = PlayList_Det['Published_Date']
+                    parsed_datetime = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
+                    mysql_published_date = parsed_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Insert data into MySQL
+                    cursor.execute("""
+                        INSERT INTO playlist_details (playlist_id, title, channel_id, published_date, video_count) 
+                        VALUES (%s, %s, %s, %s, %s)
+                        """, 
+                        (PlayList_Det['Playlist_Id'], PlayList_Det['Title'], PlayList_Det['Channel_Id'], mysql_published_date, PlayList_Det['Video_Count'])
+                    )
+                    mydb.commit()
+                else:
+                    print(f"Skipping duplicate playlist ID: {PlayList_Det['Playlist_Id']}")
+
+            Next_Page_Token = response.get('nextPageToken')
+            if not Next_Page_Token:
+                break
+
+    except Exception as e:
+        print(f"Error fetching playlist details for channel {channel_id}: {str(e)}")
+
+    return Playlist_Data
+
+# Usage example
+for channel_id in channel_ids:
+    playlist_details = get_playlist_details(channel_id)
+    print(f"Fetched {len(playlist_details)} playlists for channel {channel_id}.")
 
 def fetch_all_data(channel_id):
     channel_info = Channel_Info(channel_id)
     video_ids = Get_Video_Id(channel_id)
+    playlist_details = get_playlist_details(channel_id)
     cursor = mydb.cursor()
     video_details = Get_Video_Details(video_ids, cursor, mydb)
     cursor.close()
-    playlist_details = get_playlist_details(channel_id)
-    comment_details = get_comment_Details(video_ids[0])
-    
+    comment_details = get_comment_Details(video_ids)
+
     # Convert dictionaries to DataFrames
     channel_df = pd.DataFrame([channel_info])
-    video_df = pd.DataFrame(video_ids, columns=['video_id'])
     playlist_df = pd.DataFrame(playlist_details)
     video_detail_df = pd.DataFrame(video_details)
     comment_df = pd.DataFrame(comment_details)
-    
+
+    # Create a DataFrame for video details
+    video_df = pd.DataFrame({
+        'Video_Id': [video['video_id'] for video in video_details],
+        'Title': [video['title'] for video in video_details],
+        'Description': [video['description'] for video in video_details],
+        'Published_Date': [video['published_date'] for video in video_details],
+        'Views': [video['views'] for video in video_details],
+        'Likes': [video['likes'] for video in video_details],
+        'Dislikes': [video['dislikes'] for video in video_details],
+        'Comments': [video['comments'] for video in video_details],
+    })
+
     return {
         "channel_details": channel_df,
         "video_details": video_df,
@@ -391,30 +476,30 @@ def fetch_all_data(channel_id):
         "playlist_details": playlist_df,
         "video_data": video_detail_df
     }
-
-
+# Main function
 def main():
-    
     st.sidebar.header('Menu')
-    option=st.sidebar.radio("Select Option",['Home','Queries'])
-    if option=="Home":
-            st.header(':red[YOUTUBE DATA HARVESTING AND WAREHOUSING]', divider='rainbow')
-            channel_id = st.text_input("Enter Channel ID")
-            
-            if st.button("Get Channel Details"):
-                details = fetch_all_data(channel_id)
-                
-                st.subheader('Channel Details')
-                st.write(details["channel_details"])
+    option = st.sidebar.radio("Select Option", ['Home', 'Queries'])
 
-                st.subheader('Video Details')
-                st.write(details["video_data"])
+    if option == "Home":
+        st.header('YOUTUBE DATA HARVESTING AND WAREHOUSING')
 
-                st.subheader('Comment Details')
-                st.write(details["comment_details"])
+        channel_id = st.text_input("Enter Channel ID")
 
-                st.subheader('Playlist Details')
-                st.write(details["playlist_details"])
+        if st.button("Get Channel Details"):
+            details = fetch_all_data(channel_id)
+
+            st.subheader('Channel Details')
+            st.write(details["channel_details"])
+
+            st.subheader('Video Details')
+            st.write(details["video_details"])
+
+            st.subheader('Comment Details')
+            st.write(details["comment_details"])
+
+            st.subheader('Playlist Details')
+            st.write(details["playlist_details"])
             
     elif option == "Queries":
         st.header("Queries")
